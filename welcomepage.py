@@ -40,8 +40,8 @@ small_font = pygame.font.Font(None, 24)
 # Colors
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
-BUTTON_COLOR = (0, 122, 255)
-BUTTON_HOVER_COLOR = (0, 60, 150)
+BUTTON_COLOR = (131, 151, 214)
+BUTTON_HOVER_COLOR = (93, 103, 135)
 
 consent_message1 = "Greetings, welcome to the Fitts' Law experiment!"
 consent_message2  = "Experiment Directions:"
@@ -70,7 +70,7 @@ def welcome():
     current_datetime = now.strftime("%B %d %Y at %I:%M %p")
 
     with open("consent.txt", 'w') as file:
-        file.write('You have constned to the collection of data that is produced from your participation in the  experiment. This study is anonymous, your name will not be collected. The data will be used for non-commercial and academic purposes only. Your consent has been recorded on ' + current_datetime)
+        file.write('You have constned to the collection of data that is produced from your participation in the experiment.\n This study is anonymous, your name will not be collected.\n The data will be used for non-commercial and academic purposes only.\n\n Your consent has been recorded on ' + current_datetime)
     
 
     # Display the consent message
