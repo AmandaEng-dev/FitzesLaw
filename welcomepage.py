@@ -3,28 +3,51 @@ import sys
 from datetime import datetime
 import subprocess
 import sqlite3
+import os
+import csv
+from pathlib import Path
 
-# Connect to database
-db_path = "/Users/amanda_1/Desktop/Fitzesdb.db"
-myconnection = sqlite3.connect(db_path)
-cursor = myconnection.cursor()
+# Storage mode: choose 'db' or 'csv'
+STORAGE_MODE = 'csv'  # Change to 'db' to use SQLite database
 
-# Create ParticipantInfo table if it doesn't exist
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS ScreeningInfo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        participant_id INTEGER,
-        handedness TEXT,
-        mouse_usage_hours TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-''')
-myconnection.commit()
+# Cross-platform path for CSV file in the same directory as this script
+BASE_DIR = Path(__file__).resolve().parent
+SCREENINGINFO_CSV_PATH = BASE_DIR / 'ScreeningInfo.csv'
+DB_PATH = str(BASE_DIR / 'Fitzesdb.db')
 
-# Get the next participant ID
-cursor.execute('SELECT MAX(participant_id) FROM ScreeningInfo')
-result = cursor.fetchone()
-participant_id = 1 if result[0] is None else result[0] + 1
+if STORAGE_MODE == 'db':
+    myconnection = sqlite3.connect(DB_PATH)
+    cursor = myconnection.cursor()
+    # Create ParticipantInfo table if it doesn't exist
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ScreeningInfo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            participant_id INTEGER,
+            handedness TEXT,
+            mouse_usage_hours TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    myconnection.commit()
+    # Get the next participant ID
+    cursor.execute('SELECT MAX(participant_id) FROM ScreeningInfo')
+    result = cursor.fetchone()
+    participant_id = 1 if result[0] is None else result[0] + 1
+else:
+    # CSV mode: determine next_participant_id from CSV
+    if not SCREENINGINFO_CSV_PATH.exists():
+        with open(SCREENINGINFO_CSV_PATH, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([
+                'id', 'participant_id', 'handedness', 'mouse_usage_hours', 'timestamp'
+            ])
+        participant_id = 1
+    else:
+        with open(SCREENINGINFO_CSV_PATH, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            participant_ids = [int(row['participant_id']) for row in reader if row['participant_id'].isdigit()]
+            participant_id = max(participant_ids) + 1 if participant_ids else 1
+
 # Initialize pygame
 pygame.init()
 
@@ -143,22 +166,26 @@ def show_followup_screen():
                         selected_hours = i
                 if finish_button.collidepoint(mx, my):
                     if selected_hand and selected_hours is not None:
-
                         mouse_usage_text = hour_labels[selected_hours]
-                        
-
-                        cursor.execute('''
-                            INSERT INTO ScreeningInfo (
-                                participant_id, handedness, mouse_usage_hours
-                            ) VALUES (?, ?, ?)
-                        ''', (participant_id, selected_hand, mouse_usage_text))
-
-                        myconnection.commit()
-
-
-
+                        timestamp = datetime.now().isoformat()
+                        if STORAGE_MODE == 'db':
+                            cursor.execute('''
+                                INSERT INTO ScreeningInfo (
+                                    participant_id, handedness, mouse_usage_hours
+                                ) VALUES (?, ?, ?)
+                            ''', (participant_id, selected_hand, mouse_usage_text))
+                            myconnection.commit()
+                        else:
+                            # Write to CSV
+                            with open(SCREENINGINFO_CSV_PATH, 'a', newline='', encoding='utf-8') as csvfile:
+                                writer = csv.writer(csvfile)
+                                # id is just the row number (count lines in file minus header)
+                                with open(SCREENINGINFO_CSV_PATH, 'r', encoding='utf-8') as readfile:
+                                    row_count = sum(1 for _ in readfile) - 1
+                                writer.writerow([
+                                    row_count + 1, participant_id, selected_hand, mouse_usage_text, timestamp
+                                ])
                         pygame.quit()
-                        
                         subprocess.Popen([sys.executable, "FitzesLaw/test.py"])
 
         pygame.display.flip()

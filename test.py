@@ -3,44 +3,69 @@ import pygame
 import random
 import time
 from pygame.locals import *
+import os
+import csv
+from pathlib import Path
 
-# Database setup
-myconnection = sqlite3.connect("/Users/amanda_1/Desktop/Fitzesdb.db")
-cursor = myconnection.cursor()
+# Storage mode: choose 'db' or 'csv'
+STORAGE_MODE = 'csv'  # Change to 'db' to use SQLite database
 
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS TrialData (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        participant_id INTEGER,
-        diameter INTEGER,
-        distance INTEGER,
-        direction TEXT,
-        task_time REAL,
-        distance_travelled REAL,
-        hit INTEGER,
-        miss INTEGER,
-        square_time REAL,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-''')
+# Cross-platform path for CSV file in the same directory as this script
+BASE_DIR = Path(__file__).resolve().parent
+TRIALDATA_CSV_PATH = BASE_DIR / 'FitzesTrialData.csv'
 
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS ParticipantSummary (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        participant_id INTEGER,
-        total_distance REAL,
-        hits INTEGER,
-        misses INTEGER,
-        accuracy_percentage REAL,
-        average_square_time REAL,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-''')
+if STORAGE_MODE == 'db':
+    myconnection = sqlite3.connect(str(BASE_DIR / "Fitzesdb.db"))
+    cursor = myconnection.cursor()
 
-cursor.execute('SELECT MAX(participant_id) FROM ParticipantSummary')
-result = cursor.fetchone()
-next_participant_id = 1 if result[0] is None else result[0] + 1
-myconnection.commit()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS TrialData (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            participant_id INTEGER,
+            diameter INTEGER,
+            distance INTEGER,
+            direction TEXT,
+            task_time REAL,
+            distance_travelled REAL,
+            hit INTEGER,
+            miss INTEGER,
+            square_time REAL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ParticipantSummary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            participant_id INTEGER,
+            total_distance REAL,
+            hits INTEGER,
+            misses INTEGER,
+            accuracy_percentage REAL,
+            average_square_time REAL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    cursor.execute('SELECT MAX(participant_id) FROM ParticipantSummary')
+    result = cursor.fetchone()
+    next_participant_id = 1 if result[0] is None else result[0] + 1
+    myconnection.commit()
+else:
+    # CSV mode: determine next_participant_id from CSV
+    if not TRIALDATA_CSV_PATH.exists():
+        with open(TRIALDATA_CSV_PATH, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([
+                'id', 'participant_id', 'diameter', 'distance', 'direction',
+                'task_time', 'distance_travelled', 'hit', 'miss', 'square_time', 'timestamp'
+            ])
+        next_participant_id = 1
+    else:
+        with open(TRIALDATA_CSV_PATH, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            participant_ids = [int(row['participant_id']) for row in reader if row['participant_id'].isdigit()]
+            next_participant_id = max(participant_ids) + 1 if participant_ids else 1
 
 # Pygame setup
 pygame.init()
@@ -142,7 +167,7 @@ def present_task(diameter, distance, direction, trial_num, total_trials):
 def run_experiment(participant_id):
     trials = 320  # You can change this to 320
     total_distance = hits = misses = total_square_time = 0
-
+    trial_id = 1
     for trial_num in range(1, trials + 1):
         square_time = click_square(trial_num, trials)
         diameter, distance, direction = random.choice(task_combinations)
@@ -161,27 +186,39 @@ def run_experiment(participant_id):
 
         total_square_time += square_time
 
-        cursor.execute('''
-            INSERT INTO TrialData (
-                participant_id, diameter, distance, direction,
-                task_time, distance_travelled, hit, miss, square_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (participant_id, diameter, distance, direction,
-              task_time, distance_travelled, hit, miss, square_time))
-        myconnection.commit()
+        if STORAGE_MODE == 'db':
+            cursor.execute('''
+                INSERT INTO TrialData (
+                    participant_id, diameter, distance, direction,
+                    task_time, distance_travelled, hit, miss, square_time
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (participant_id, diameter, distance, direction,
+                  task_time, distance_travelled, hit, miss, square_time))
+            myconnection.commit()
+        else:
+            import datetime
+            with open(TRIALDATA_CSV_PATH, 'a', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow([
+                    trial_id, participant_id, diameter, distance, direction,
+                    task_time, distance_travelled, int(hit), int(miss), square_time,
+                    datetime.datetime.now().isoformat()
+                ])
+            trial_id += 1
 
     total_attempts = hits + misses
     accuracy_percentage = (hits / total_attempts) * 100 if total_attempts > 0 else 0
     average_square_time = total_square_time / trials
 
-    cursor.execute('''
-        INSERT INTO ParticipantSummary (
-            participant_id, total_distance, hits, misses,
-            accuracy_percentage, average_square_time
-        ) VALUES (?, ?, ?, ?, ?, ?)
-    ''', (participant_id, total_distance, hits, misses,
-          accuracy_percentage, average_square_time))
-    myconnection.commit()
+    if STORAGE_MODE == 'db':
+        cursor.execute('''
+            INSERT INTO ParticipantSummary (
+                participant_id, total_distance, hits, misses,
+                accuracy_percentage, average_square_time
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ''', (participant_id, total_distance, hits, misses,
+              accuracy_percentage, average_square_time))
+        myconnection.commit()
 
     font = pygame.font.SysFont(None, 48)
     text_surface = font.render("Thank you for participating! Your consent has been recorded.", True, BLUE)
@@ -202,5 +239,6 @@ if __name__ == '__main__':
     except Exception as e:
         print("Error:", e)
     finally:
-        myconnection.close()
+        if STORAGE_MODE == 'db':
+            myconnection.close()
         exit()
